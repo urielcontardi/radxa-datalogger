@@ -10,7 +10,7 @@ services:
       - /dev:/dev
       - /run/udev:/run/udev:ro
     environment:
-      - BAUD_RATE=115200
+      - BAUD_RATE=3000000
       - LOG_DIR=/app/logs
       - PORT=8080
     restart: always
