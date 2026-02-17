@@ -23,13 +23,26 @@ class FlashManager:
         self.target = target
         self.frequency = frequency
 
-    def _find_pack(self) -> Optional[str]:
-        """Find a .pack file in the pack directory."""
-        if self.pack_dir.exists():
-            packs = sorted(self.pack_dir.glob("*.pack"))
-            if packs:
-                return str(packs[0])
-        return None
+    def _find_pack(self, target: str) -> Optional[str]:
+        """Find a .pack file that matches the target name."""
+        if not self.pack_dir.exists():
+            return None
+        
+        packs = list(self.pack_dir.glob("*.pack"))
+        if not packs:
+            return None
+
+        # Try to find a pack that contains part of the target name (e.g. "FG28")
+        # Extract family part, e.g., EFR32FG28 from EFR32FG28B322...
+        match = re.search(r'EFR32[A-Z]{2}\d{2}', target, re.IGNORECASE)
+        if match:
+            family = match.group(0).upper()
+            for p in packs:
+                if family in p.name.upper():
+                    return str(p)
+        
+        # Fallback to first pack if no match
+        return str(sorted(packs)[0])
 
     def list_packs(self) -> list[str]:
         """List available .pack files."""
@@ -71,7 +84,7 @@ class FlashManager:
 
         use_target = target or self.target
         use_freq = frequency or self.frequency
-        use_pack = pack_path or self._find_pack()
+        use_pack = pack_path or self._find_pack(use_target)
 
         cmd = [
             "pyocd",
