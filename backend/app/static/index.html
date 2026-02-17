@@ -122,20 +122,25 @@ const COLORS = ['#586069','#ff6b6b','#69db7c','#ffd43b','#74c0fc','#da77f2','#66
 const BRIGHT  = ['#8b949e','#ff8787','#8ce99a','#ffe066','#a5d8ff','#e599f7','#99e9f2','#f8f9fa'];
 
 function ansiToHtml(raw) {
-  if (!raw.includes('\x1b')) return raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Se não houver caractere de escape, retorna o texto limpo
+  if (!raw.includes('\x1b') && !raw.includes('\u001b')) {
+    return raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
   
   let h = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   let out = '', open = 0;
-  // Regex mais abrangente para códigos ANSI
-  const re = /\x1b\[([0-9;]*)m/g;
+  
+  // Regex mais agressiva para capturar sequências de escape ANSI (CSI)
+  const re = /(?:\x1b|\\x1b|\\033|\[|\u001b)\[([0-9;]*)m/g;
   let last = 0, m;
   
   while ((m = re.exec(h)) !== null) {
     out += h.substring(last, m.index);
     last = m.index + m[0].length;
+    
     const codes = m[1].split(';').filter(Boolean);
     
-    if (!codes.length || codes.includes('0')) {
+    if (!codes.length || codes.includes('0') || codes.includes('00')) {
       while (open > 0) { out += '</span>'; open--; }
     } else {
       let s = [];

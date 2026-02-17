@@ -100,9 +100,10 @@ class SerialManager:
                 while self._running:
                     raw = ser.readline()
                     if raw:
-                        # Tenta decodificar mas mantém os bytes de escape ANSI
+                        # Preserva os bytes originais para não perder códigos ANSI
                         try:
-                            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                            # Tenta latin-1 que preserva todos os bytes 0-255 sem erros
+                            line = raw.decode("latin-1").rstrip("\r\n")
                         except Exception:
                             line = str(raw).rstrip("\r\n")
                         
