@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Serial Logger</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--surface:#161b22;--border:#30363d;
+  --text:#c9d1d9;--text-dim:#8b949e;--accent:#58a6ff;
+  --green:#3fb950;--red:#f85149;--yellow:#d29922;
+}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--text)}
+body{display:flex;flex-direction:column}
+
+/* --- HEADER --- */
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border)}
+header h1{font-size:18px;font-weight:600;letter-spacing:.5px}
+header h1 span{color:var(--accent)}
+.header-status{font-size:12px;color:var(--text-dim)}
+
+/* --- TABS --- */
+.tabs{display:flex;gap:4px;padding:8px 20px 0;background:var(--surface);border-bottom:1px solid var(--border)}
+.tab{padding:8px 18px;border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;
+  cursor:pointer;font-size:13px;color:var(--text-dim);background:transparent;transition:.15s}
+.tab:hover{color:var(--text);background:var(--bg)}
+.tab.active{color:var(--text);background:var(--bg);border-color:var(--border);font-weight:600}
+.tab .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;
+  background:var(--red);vertical-align:middle}
+.tab .dot.on{background:var(--green)}
+
+/* --- CONTROLS --- */
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+  padding:10px 20px;background:var(--surface);border-bottom:1px solid var(--border)}
+.controls label{font-size:12px;color:var(--text-dim)}
+.controls input[type="date"],.controls input[type="text"]{
+  padding:5px 8px;border:1px solid var(--border);border-radius:6px;
+  background:var(--bg);color:var(--text);font-size:13px}
+.controls input[type="text"]{width:180px}
+.btn{padding:5px 14px;border:1px solid var(--border);border-radius:6px;
+  background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;transition:.15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.live{border-color:var(--green);color:var(--green);font-weight:600}
+.btn.live.off{border-color:var(--border);color:var(--text-dim);font-weight:400}
+.spacer{flex:1}
+
+/* --- LOG OUTPUT --- */
+main{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:0 12px 12px}
+#log-wrap{flex:1;overflow-y:auto;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;margin-top:8px;position:relative}
+#log-output{padding:10px 14px;font-family:'Cascadia Code','Fira Code','JetBrains Mono',
+  'Source Code Pro',Consolas,monospace;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+#log-output .line{display:block}
+#log-output .ts{color:var(--text-dim);user-select:all}
+#empty-msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  color:var(--text-dim);font-size:14px;text-align:center}
+
+/* --- FOOTER --- */
+footer{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 20px;font-size:12px;color:var(--text-dim);
+  background:var(--surface);border-top:1px solid var(--border)}
+
+/* --- SCROLLBAR --- */
+#log-wrap::-webkit-scrollbar{width:8px}
+#log-wrap::-webkit-scrollbar-track{background:var(--bg)}
+#log-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+#log-wrap::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
+
+/* --- LOADING --- */
+.spinner{display:none;width:18px;height:18px;border:2px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner.show{display:inline-block}
+
+@media(max-width:640px){
+  .controls{padding:8px 12px}
+  header{padding:10px 12px}
+  .tabs{padding:6px 12px 0}
+  #log-output{font-size:11px;padding:8px 10px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>&#9638;</span> Serial Logger</h1>
+  <span class="header-status" id="header-status">Procurando dispositivos...</span>
+</header>
+
+<div class="tabs" id="port-tabs"></div>
+
+<div class="controls">
+  <label>De: <input type="date" id="date-from"></label>
+  <label>Ate: <input type="date" id="date-to"></label>
+  <button class="btn" id="btn-load" title="Carregar logs do periodo">Carregar</button>
+  <div class="spacer"></div>
+  <input type="text" id="search-input" placeholder="Buscar no log...">
+  <button class="btn" id="btn-search">Buscar</button>
+  <button class="btn live" id="btn-live">&#9679; Ao Vivo</button>
+  <button class="btn" id="btn-download" title="Baixar log exibido">&#8681; Baixar</button>
+  <div class="spinner" id="spinner"></div>
+</div>
+
+<main>
+  <div id="log-wrap">
+    <div id="log-output"></div>
+    <div id="empty-msg">Nenhum dispositivo DAP encontrado.<br>Conecte os dispositivos e aguarde...</div>
+  </div>
+</main>
+
+<footer>
+  <span id="footer-left">Aguardando...</span>
+  <span id="footer-right">0 linhas</span>
+</footer>
+
+<script>
+/* ====== ANSI-to-HTML parser ====== */
+const COLORS = ['#586069','#ff6b6b','#69db7c','#ffd43b','#74c0fc','#da77f2','#66d9e8','#ced4da'];
+const BRIGHT  = ['#8b949e','#ff8787','#8ce99a','#ffe066','#a5d8ff','#e599f7','#99e9f2','#f8f9fa'];
+
+function ansiToHtml(raw) {
+  let h = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let out = '', open = 0;
+  const re = /\x1b\[([0-9;]*)m/g;
+  let last = 0, m;
+  while ((m = re.exec(h)) !== null) {
+    out += h.substring(last, m.index);
+    last = m.index + m[0].length;
+    const codes = m[1].split(';').filter(Boolean);
+    if (!codes.length || codes.includes('0')) {
+      while (open > 0) { out += '</span>'; open--; }
+    } else {
+      let s = [];
+      for (const c of codes) {
+        const n = parseInt(c);
+        if (n >= 30 && n <= 37) s.push('color:' + COLORS[n-30]);
+        if (n >= 90 && n <= 97) s.push('color:' + BRIGHT[n-90]);
+        if (n >= 40 && n <= 47) s.push('background:' + COLORS[n-40]);
+        if (n >= 100 && n <= 107) s.push('background:' + BRIGHT[n-100]);
+        if (n === 1) s.push('font-weight:bold');
+        if (n === 2) s.push('opacity:.7');
+        if (n === 3) s.push('font-style:italic');
+        if (n === 4) s.push('text-decoration:underline');
+      }
+      if (s.length) { out += '<span style="'+s.join(';')+'">'; open++; }
+    }
+  }
+  out += h.substring(last);
+  while (open > 0) { out += '</span>'; open--; }
+  return out;
+}
+
+/* ====== Format a single log line ====== */
+const TS_RE = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\]\s?/;
+function formatLine(text) {
+  const m = text.match(TS_RE);
+  if (m) {
+    const ts = m[1].replace('T',' ');
+    const rest = text.substring(m[0].length);
+    return '<span class="line"><span class="ts">[' + ts + ']</span> ' + ansiToHtml(rest) + '</span>\n';
+  }
+  return '<span class="line">' + ansiToHtml(text) + '</span>\n';
+}
+
+/* ====== State ====== */
+let ports = [];
+let activePort = null;
+let liveMode = true;
+let ws = null;
+let autoScroll = true;
+let lineCount = 0;
+const MAX_DOM_LINES = 8000;
+
+const $tabs      = document.getElementById('port-tabs');
+const $logWrap   = document.getElementById('log-wrap');
+const $logOut    = document.getElementById('log-output');
+const $empty     = document.getElementById('empty-msg');
+const $btnLive   = document.getElementById('btn-live');
+const $btnLoad   = document.getElementById('btn-load');
+const $btnSearch = document.getElementById('btn-search');
+const $btnDL     = document.getElementById('btn-download');
+const $dateFrom  = document.getElementById('date-from');
+const $dateTo    = document.getElementById('date-to');
+const $search    = document.getElementById('search-input');
+const $spinner   = document.getElementById('spinner');
+const $hStatus   = document.getElementById('header-status');
+const $fLeft     = document.getElementById('footer-left');
+const $fRight    = document.getElementById('footer-right');
+
+/* ====== Auto-scroll detection ====== */
+$logWrap.addEventListener('scroll', () => {
+  const { scrollHeight, scrollTop, clientHeight } = $logWrap;
+  autoScroll = (scrollHeight - scrollTop - clientHeight) < 60;
+});
+
+function scrollBottom() {
+  if (autoScroll) $logWrap.scrollTop = $logWrap.scrollHeight;
+}
+
+/* ====== DOM helpers ====== */
+function clearLog() {
+  $logOut.innerHTML = '';
+  lineCount = 0;
+  $fRight.textContent = '0 linhas';
+}
+
+function appendHtml(html, count) {
+  $logOut.insertAdjacentHTML('beforeend', html);
+  lineCount += count;
+  // trim excess
+  while ($logOut.childNodes.length > MAX_DOM_LINES) {
+    $logOut.removeChild($logOut.firstChild);
+    lineCount--;
+  }
+  $fRight.textContent = lineCount + ' linhas';
+  scrollBottom();
+}
+
+function setLoading(on) { $spinner.classList.toggle('show', on); }
+
+/* ====== Port tabs ====== */
+function renderTabs() {
+  $tabs.innerHTML = '';
+  ports.forEach((p, i) => {
+    const t = document.createElement('div');
+    t.className = 'tab' + (p.id === activePort ? ' active' : '');
+    t.innerHTML = '<span class="dot ' + (p.connected ? 'on' : '') + '"></span>' +
+                  p.name + ' <small style="color:var(--text-dim)">(' + p.device + ')</small>';
+    t.onclick = () => selectPort(p.id);
+    $tabs.appendChild(t);
+  });
+}
+
+/* ====== Fetch ports ====== */
+async function fetchPorts() {
+  try {
+    const r = await fetch('/api/ports');
+    ports = await r.json();
+    if (ports.length) {
+      $empty.style.display = 'none';
+      const connected = ports.filter(p => p.connected).length;
+      $hStatus.textContent = connected + '/' + ports.length + ' conectado(s)';
+      if (!activePort) selectPort(ports[0].id);
+      else renderTabs();
+    } else {
+      $empty.style.display = '';
+      $hStatus.textContent = 'Procurando dispositivos...';
+    }
+  } catch { /* retry next interval */ }
+}
+
+/* ====== Select a port ====== */
+function selectPort(id) {
+  activePort = id;
+  renderTabs();
+  clearLog();
+  const p = ports.find(x => x.id === id);
+  $fLeft.textContent = p ? p.device : id;
+  if (liveMode) startLive(); else loadHistory();
+}
+
+/* ====== WebSocket live ====== */
+function startLive() {
+  stopWs();
+  if (!activePort) return;
+  clearLog();
+  setLoading(true);
+
+  // Load recent tail first
+  fetch('/api/logs/' + activePort + '/tail?lines=500')
+    .then(r => r.json())
+    .then(data => {
+      setLoading(false);
+      if (data.lines && data.lines.length) {
+        const html = data.lines.map(formatLine).join('');
+        appendHtml(html, data.lines.length);
+      }
+      connectWs();
+    })
+    .catch(() => { setLoading(false); connectWs(); });
+}
+
+function connectWs() {
+  if (!activePort) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/api/ws/' + activePort);
+  ws.onmessage = (e) => appendHtml(formatLine(e.data), 1);
+  ws.onclose = () => { if (liveMode && activePort) setTimeout(connectWs, 3000); };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+
+function stopWs() {
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+}
+
+/* ====== Load historical logs ====== */
+async function loadHistory() {
+  if (!activePort) return;
+  stopWs();
+  clearLog();
+  setLoading(true);
+
+  const params = new URLSearchParams();
+  if ($dateFrom.value) params.set('date_from', $dateFrom.value);
+  if ($dateTo.value)   params.set('date_to',   $dateTo.value);
+  if ($search.value)   params.set('search',     $search.value);
+  params.set('limit', '10000');
+
+  try {
+    const r = await fetch('/api/logs/' + activePort + '?' + params);
+    const data = await r.json();
+    setLoading(false);
+    if (data.lines && data.lines.length) {
+      const html = data.lines.map(formatLine).join('');
+      appendHtml(html, data.lines.length);
+      if (data.has_more) $fLeft.textContent += ' (truncado em 10000 linhas)';
+    } else {
+      $logOut.innerHTML = '<span style="color:var(--text-dim)">Nenhum registro encontrado para o periodo.</span>';
+    }
+  } catch (e) {
+    setLoading(false);
+    $logOut.innerHTML = '<span style="color:var(--red)">Erro ao carregar logs.</span>';
+  }
+}
+
+/* ====== Controls ====== */
+$btnLive.addEventListener('click', () => {
+  liveMode = !liveMode;
+  $btnLive.classList.toggle('off', !liveMode);
+  $btnLive.innerHTML = liveMode ? '&#9679; Ao Vivo' : '&#9675; Historico';
+  if (liveMode) startLive(); else { stopWs(); }
+});
+
+$btnLoad.addEventListener('click', () => {
+  liveMode = false;
+  $btnLive.classList.add('off');
+  $btnLive.innerHTML = '&#9675; Historico';
+  loadHistory();
+});
+
+$btnSearch.addEventListener('click', () => {
+  liveMode = false;
+  $btnLive.classList.add('off');
+  $btnLive.innerHTML = '&#9675; Historico';
+  loadHistory();
+});
+
+$search.addEventListener('keydown', (e) => { if (e.key === 'Enter') $btnSearch.click(); });
+
+$btnDL.addEventListener('click', () => {
+  const text = $logOut.innerText;
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (activePort || 'log') + '_' + new Date().toISOString().slice(0,10) + '.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ====== Init ====== */
+const today = new Date().toISOString().slice(0, 10);
+$dateTo.value = today;
+
+fetchPorts();
+setInterval(fetchPorts, 5000);
+</script>
+</body>
+</html>

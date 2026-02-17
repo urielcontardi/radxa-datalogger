@@ -1,0 +1,16 @@
+services:
+  serial-logger:
+    build: ./backend
+    container_name: serial-logger
+    privileged: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+      - /dev:/dev
+      - /run/udev:/run/udev:ro
+    environment:
+      - BAUD_RATE=115200
+      - LOG_DIR=/app/logs
+      - PORT=8080
+    restart: always

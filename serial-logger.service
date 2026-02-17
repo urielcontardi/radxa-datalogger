@@ -1,0 +1,16 @@
+[Unit]
+Description=Serial Logger (Docker Compose)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/serial-logger
+ExecStart=/usr/bin/docker compose up -d --build
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
