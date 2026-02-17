@@ -122,14 +122,19 @@ const COLORS = ['#586069','#ff6b6b','#69db7c','#ffd43b','#74c0fc','#da77f2','#66
 const BRIGHT  = ['#8b949e','#ff8787','#8ce99a','#ffe066','#a5d8ff','#e599f7','#99e9f2','#f8f9fa'];
 
 function ansiToHtml(raw) {
+  if (!raw.includes('\x1b')) return raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  
   let h = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   let out = '', open = 0;
+  // Regex mais abrangente para códigos ANSI
   const re = /\x1b\[([0-9;]*)m/g;
   let last = 0, m;
+  
   while ((m = re.exec(h)) !== null) {
     out += h.substring(last, m.index);
     last = m.index + m[0].length;
     const codes = m[1].split(';').filter(Boolean);
+    
     if (!codes.length || codes.includes('0')) {
       while (open > 0) { out += '</span>'; open--; }
     } else {
@@ -141,11 +146,11 @@ function ansiToHtml(raw) {
         if (n >= 40 && n <= 47) s.push('background:' + COLORS[n-40]);
         if (n >= 100 && n <= 107) s.push('background:' + BRIGHT[n-100]);
         if (n === 1) s.push('font-weight:bold');
-        if (n === 2) s.push('opacity:.7');
-        if (n === 3) s.push('font-style:italic');
-        if (n === 4) s.push('text-decoration:underline');
       }
-      if (s.length) { out += '<span style="'+s.join(';')+'">'; open++; }
+      if (s.length) { 
+        out += '<span style="'+s.join(';')+'">'; 
+        open++; 
+      }
     }
   }
   out += h.substring(last);

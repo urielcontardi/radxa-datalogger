@@ -100,7 +100,12 @@ class SerialManager:
                 while self._running:
                     raw = ser.readline()
                     if raw:
-                        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                        # Tenta decodificar mas mantém os bytes de escape ANSI
+                        try:
+                            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                        except Exception:
+                            line = str(raw).rstrip("\r\n")
+                        
                         ts = datetime.now().isoformat(timespec="milliseconds")
                         log_entry = f"[{ts}] {line}"
 
