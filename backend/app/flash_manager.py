@@ -102,6 +102,7 @@ class FlashManager:
             serial_number,
             "-f",
             use_freq,
+            "-v",
         ]
         if use_pack:
             cmd.extend(["--pack", use_pack])
