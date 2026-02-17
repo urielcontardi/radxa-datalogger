@@ -121,46 +121,83 @@ footer{display:flex;justify-content:space-between;align-items:center;
 const COLORS = ['#586069','#ff6b6b','#69db7c','#ffd43b','#74c0fc','#da77f2','#66d9e8','#ced4da'];
 const BRIGHT  = ['#8b949e','#ff8787','#8ce99a','#ffe066','#a5d8ff','#e599f7','#99e9f2','#f8f9fa'];
 
+function escHtml(ch) {
+  if (ch === '&') return '&amp;';
+  if (ch === '<') return '&lt;';
+  if (ch === '>') return '&gt;';
+  return ch;
+}
+
 function ansiToHtml(raw) {
-  // Se não houver caractere de escape, retorna o texto limpo
-  if (!raw.includes('\x1b') && !raw.includes('\u001b')) {
-    return raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-  
-  let h = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  let out = '', open = 0;
-  
-  // Regex mais agressiva para capturar sequências de escape ANSI (CSI)
-  const re = /(?:\x1b|\\x1b|\\033|\[|\u001b)\[([0-9;]*)m/g;
-  let last = 0, m;
-  
-  while ((m = re.exec(h)) !== null) {
-    out += h.substring(last, m.index);
-    last = m.index + m[0].length;
-    
-    const codes = m[1].split(';').filter(Boolean);
-    
-    if (!codes.length || codes.includes('0') || codes.includes('00')) {
-      while (open > 0) { out += '</span>'; open--; }
-    } else {
-      let s = [];
-      for (const c of codes) {
-        const n = parseInt(c);
-        if (n >= 30 && n <= 37) s.push('color:' + COLORS[n-30]);
-        if (n >= 90 && n <= 97) s.push('color:' + BRIGHT[n-90]);
-        if (n >= 40 && n <= 47) s.push('background:' + COLORS[n-40]);
-        if (n >= 100 && n <= 107) s.push('background:' + BRIGHT[n-100]);
-        if (n === 1) s.push('font-weight:bold');
+  let result = '';
+  let openSpans = 0;
+  let i = 0;
+
+  while (i < raw.length) {
+    const code = raw.charCodeAt(i);
+
+    // Check for ESC character (0x1B = 27)
+    if (code === 0x1b && i + 1 < raw.length && raw[i + 1] === '[') {
+      // Parse the CSI sequence: ESC [ <codes> m
+      let j = i + 2;
+      let seq = '';
+      while (j < raw.length && ((raw[j] >= '0' && raw[j] <= '9') || raw[j] === ';')) {
+        seq += raw[j];
+        j++;
       }
-      if (s.length) { 
-        out += '<span style="'+s.join(';')+'">'; 
-        open++; 
+      if (j < raw.length && raw[j] === 'm') {
+        // Valid SGR sequence found
+        j++; // skip 'm'
+        const codes = seq.split(';').filter(Boolean).map(Number);
+
+        // First: close all open spans if reset (0) is present
+        if (!codes.length || (codes.length === 1 && codes[0] === 0)) {
+          while (openSpans > 0) { result += '</span>'; openSpans--; }
+        } else {
+          // Handle combined codes like 0;32 (reset + green)
+          // First reset if 0 is in the list
+          if (codes.includes(0)) {
+            while (openSpans > 0) { result += '</span>'; openSpans--; }
+          }
+          // Then apply color/style codes
+          let styles = [];
+          for (const n of codes) {
+            if (n === 0) continue; // already handled
+            if (n === 1) styles.push('font-weight:bold');
+            if (n === 2) styles.push('opacity:.7');
+            if (n === 3) styles.push('font-style:italic');
+            if (n === 4) styles.push('text-decoration:underline');
+            if (n >= 30 && n <= 37) styles.push('color:' + COLORS[n - 30]);
+            if (n >= 40 && n <= 47) styles.push('background:' + COLORS[n - 40]);
+            if (n >= 90 && n <= 97) styles.push('color:' + BRIGHT[n - 90]);
+            if (n >= 100 && n <= 107) styles.push('background:' + BRIGHT[n - 100]);
+          }
+          if (styles.length) {
+            result += '<span style="' + styles.join(';') + '">';
+            openSpans++;
+          }
+        }
+        i = j;
+        continue;
       }
+      // Not a valid SGR sequence, skip the ESC char
+      i++;
+      continue;
     }
+
+    // Skip non-printable control chars (except tab/newline)
+    if (code < 32 && code !== 9 && code !== 10) {
+      i++;
+      continue;
+    }
+
+    // Normal printable character - HTML-escape it
+    result += escHtml(raw[i]);
+    i++;
   }
-  out += h.substring(last);
-  while (open > 0) { out += '</span>'; open--; }
-  return out;
+
+  while (openSpans > 0) { result += '</span>'; openSpans--; }
+  return result;
 }
 
 /* ====== Format a single log line ====== */
