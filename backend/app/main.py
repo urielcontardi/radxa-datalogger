@@ -222,14 +222,23 @@ async def flash_device(
     frequency: Optional[str] = Form(None),
 ):
     """Upload a .hex and flash it to the specified DAP port via pyocd."""
+    import time as _time
+
     if not hex_file.filename:
         return JSONResponse(status_code=400, content={"error": "Arquivo hex obrigatorio"})
 
+    timings: list[str] = []
+    t0 = _time.monotonic()
+
     hex_path = f"/tmp/{hex_file.filename}"
     content = await hex_file.read()
+    t_upload = _time.monotonic() - t0
+    timings.append(f"Upload recebido: {len(content)/1024:.1f} KB em {t_upload:.2f}s")
+
     with open(hex_path, "wb") as f:
         f.write(content)
 
+    t1 = _time.monotonic()
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
@@ -240,6 +249,12 @@ async def flash_device(
             frequency=frequency if frequency else None,
         ),
     )
+    t_flash = _time.monotonic() - t1
+    t_total = _time.monotonic() - t0
+    timings.append(f"pyocd flash: {t_flash:.2f}s")
+    timings.append(f"Total: {t_total:.2f}s")
+
+    result["timings"] = timings
 
     try:
         os.unlink(hex_path)

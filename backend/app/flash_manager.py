@@ -1,6 +1,7 @@
 import logging
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -83,7 +84,13 @@ class FlashManager:
 
         use_target = target or self.target
         use_freq = frequency or self.frequency
+
+        steps: list[str] = []
+
+        t0 = time.monotonic()
         use_pack = self._find_pack(use_target)
+        t_pack = time.monotonic() - t0
+        steps.append(f"Busca pack: {t_pack:.3f}s -> {Path(use_pack).name if use_pack else 'nenhum'}")
 
         cmd = [
             "pyocd",
@@ -103,14 +110,18 @@ class FlashManager:
 
         try:
             logger.info("Running: %s", cmd_str)
+            t1 = time.monotonic()
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=180
             )
+            t_pyocd = time.monotonic() - t1
+            steps.append(f"Execucao pyocd: {t_pyocd:.2f}s")
             return {
                 "success": result.returncode == 0,
                 "output": result.stdout,
                 "error": result.stderr,
                 "command": cmd_str,
+                "steps": steps,
             }
         except subprocess.TimeoutExpired:
             return {

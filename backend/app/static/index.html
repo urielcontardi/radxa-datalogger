@@ -778,6 +778,12 @@ async function doFlash(portId, portName) {
     const data = await r.json();
 
     if (data.command) consoleLog('$ ' + data.command, 'cmd');
+    if (data.steps && data.steps.length) {
+      data.steps.forEach(s => consoleLog('  [timing] ' + s, 'warn'));
+    }
+    if (data.timings && data.timings.length) {
+      data.timings.forEach(s => consoleLog('  [timing] ' + s, 'warn'));
+    }
     if (data.output) consoleLog(data.output.trim(), 'info');
     if (data.error) consoleLog(data.error.trim(), data.success ? 'warn' : 'err');
 
