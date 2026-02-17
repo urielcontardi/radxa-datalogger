@@ -23,6 +23,8 @@ class SerialManager:
         self.subscribers: dict[str, list[Callable]] = {}
         self._running = False
         self._lock = threading.Lock()
+        self._pause_flags: dict[str, bool] = {}
+        self._pause_ack: dict[str, threading.Event] = {}
 
     @staticmethod
     def _sanitize_id(value: str) -> str:
@@ -49,9 +51,23 @@ class SerialManager:
                     "device": info["device"],
                     "name": info["name"],
                     "connected": info.get("connected", False),
+                    "serial_number": info.get("serial_number", ""),
+                    "flashing": self._pause_flags.get(pid, False),
                 }
                 for pid, info in sorted(self.ports.items())
             ]
+
+    def pause_port(self, port_id: str):
+        """Pause serial reading so pyocd can access the probe. Blocks until released."""
+        self._pause_ack[port_id] = threading.Event()
+        with self._lock:
+            self._pause_flags[port_id] = True
+        self._pause_ack[port_id].wait(timeout=10)
+
+    def resume_port(self, port_id: str):
+        """Resume serial reading after flash."""
+        with self._lock:
+            self._pause_flags[port_id] = False
 
     def subscribe(self, port_id: str, callback: Callable):
         with self._lock:
@@ -79,7 +95,35 @@ class SerialManager:
         port_log_dir.mkdir(parents=True, exist_ok=True)
 
         while self._running:
+            # Handle pause (e.g. during firmware flash)
+            with self._lock:
+                paused = self._pause_flags.get(port_id, False)
+            if paused:
+                with self._lock:
+                    self.ports[port_id]["connected"] = False
+                ack = self._pause_ack.get(port_id)
+                if ack:
+                    ack.set()
+                ts = datetime.now().isoformat(timespec="milliseconds")
+                self._notify(
+                    port_id,
+                    f"[{ts}] \x1b[93m--- Serial pausada (flash em andamento) ---\x1b[0m",
+                )
+                while self._running:
+                    with self._lock:
+                        if not self._pause_flags.get(port_id, False):
+                            break
+                    time.sleep(0.2)
+                ts = datetime.now().isoformat(timespec="milliseconds")
+                self._notify(
+                    port_id,
+                    f"[{ts}] \x1b[92m--- Serial retomada ---\x1b[0m",
+                )
+                continue
+
             device = self.ports[port_id]["device"]
+            ser = None
+            log_fh = None
             try:
                 if not os.path.exists(device):
                     with self._lock:
@@ -99,10 +143,14 @@ class SerialManager:
 
                 buf = bytearray()
                 current_date = ""
-                log_fh = None
                 last_flush = time.monotonic()
 
                 while self._running:
+                    # Break if paused (flash request)
+                    with self._lock:
+                        if self._pause_flags.get(port_id, False):
+                            break
+
                     # Read all available bytes at once (bulk read)
                     waiting = ser.in_waiting
                     if waiting > 0:
@@ -149,10 +197,6 @@ class SerialManager:
                     for entry in entries_to_notify:
                         self._notify(port_id, entry)
 
-                if log_fh:
-                    log_fh.flush()
-                    log_fh.close()
-
             except serial.SerialException:
                 with self._lock:
                     self.ports[port_id]["connected"] = False
@@ -161,6 +205,18 @@ class SerialManager:
                 with self._lock:
                     self.ports[port_id]["connected"] = False
                 time.sleep(5)
+            finally:
+                if log_fh:
+                    try:
+                        log_fh.flush()
+                        log_fh.close()
+                    except Exception:
+                        pass
+                if ser:
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
 
     def _discover_and_start(self):
         dap_ports = self.discover_dap_ports()

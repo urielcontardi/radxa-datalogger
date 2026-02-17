@@ -6,19 +6,29 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from flash_manager import FlashManager
 from serial_manager import SerialManager
 
 LOG_DIR = os.getenv("LOG_DIR", "/app/logs")
 BAUD_RATE = int(os.getenv("BAUD_RATE", "115200"))
+PACK_DIR = os.getenv("PACK_DIR", "/app/packs")
+PYOCD_TARGET = os.getenv("PYOCD_TARGET", "EFR32FG28B322F1024IM48")
+PYOCD_FREQ = os.getenv("PYOCD_FREQ", "20M")
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 TS_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\]")
 
 manager = SerialManager(log_dir=LOG_DIR, baud_rate=BAUD_RATE)
+flash_mgr = FlashManager(
+    serial_manager=manager,
+    pack_dir=PACK_DIR,
+    target=PYOCD_TARGET,
+    frequency=PYOCD_FREQ,
+)
 
 
 @asynccontextmanager
@@ -28,7 +38,7 @@ async def lifespan(app: FastAPI):
     manager.stop()
 
 
-app = FastAPI(title="Radxa Serial Logger", lifespan=lifespan)
+app = FastAPI(title="Radxa Serial Logger & Flasher", lifespan=lifespan)
 
 
 # --- REST API ---
@@ -174,6 +184,69 @@ async def get_logs(
             break
 
     return {"lines": lines, "has_more": len(lines) >= limit}
+
+
+# --- Flash API ---
+
+
+@app.get("/api/flasher/config")
+async def flash_config():
+    """Return current flash configuration and available packs."""
+    return {
+        "target": flash_mgr.target,
+        "frequency": flash_mgr.frequency,
+        "packs": flash_mgr.list_packs(),
+    }
+
+
+@app.post("/api/flasher/upload-pack")
+async def upload_pack(file: UploadFile = File(...)):
+    """Upload a .pack file for persistent use."""
+    if not file.filename or not file.filename.endswith(".pack"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Arquivo deve ser .pack"},
+        )
+    dest = Path(PACK_DIR) / file.filename
+    content = await file.read()
+    with open(dest, "wb") as f:
+        f.write(content)
+    return {"status": "ok", "filename": file.filename, "size": len(content)}
+
+
+@app.post("/api/flasher/flash/{port_id}")
+async def flash_device(
+    port_id: str,
+    hex_file: UploadFile = File(...),
+    target: Optional[str] = Form(None),
+    frequency: Optional[str] = Form(None),
+):
+    """Upload a .hex and flash it to the specified DAP port via pyocd."""
+    if not hex_file.filename:
+        return JSONResponse(status_code=400, content={"error": "Arquivo hex obrigatorio"})
+
+    hex_path = f"/tmp/{hex_file.filename}"
+    content = await hex_file.read()
+    with open(hex_path, "wb") as f:
+        f.write(content)
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: flash_mgr.flash(
+            port_id=port_id,
+            hex_path=hex_path,
+            target=target if target else None,
+            frequency=frequency if frequency else None,
+        ),
+    )
+
+    try:
+        os.unlink(hex_path)
+    except OSError:
+        pass
+
+    return result
 
 
 # --- WebSocket ---

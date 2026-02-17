@@ -7,10 +7,14 @@ services:
       - "8080:8080"
     volumes:
       - /mnt/external_sd/logs:/app/logs
+      - /mnt/external_sd/packs:/app/packs
       - /dev:/dev
       - /run/udev:/run/udev:ro
     environment:
       - BAUD_RATE=3000000
       - LOG_DIR=/app/logs
+      - PACK_DIR=/app/packs
+      - PYOCD_TARGET=EFR32FG28B322F1024IM48
+      - PYOCD_FREQ=20M
       - PORT=8080
     restart: always
