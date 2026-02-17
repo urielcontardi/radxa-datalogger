@@ -74,19 +74,6 @@ class SerialManager:
             except Exception:
                 pass
 
-    def _process_line(self, port_id: str, line: str, log_file_handle, log_file_path):
-        """Process a complete line: timestamp, log to file, notify subscribers."""
-        if not line:
-            return
-
-        ts = datetime.now().isoformat(timespec="milliseconds")
-        log_entry = f"[{ts}] {line}"
-
-        log_file_handle.write(log_entry + "\n")
-        log_file_handle.flush()
-
-        self._notify(port_id, log_entry)
-
     def _read_serial(self, port_id: str):
         port_log_dir = self.log_dir / port_id
         port_log_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +87,7 @@ class SerialManager:
                     time.sleep(2)
                     continue
 
-                ser = serial.Serial(device, self.baud_rate, timeout=0.1)
+                ser = serial.Serial(device, self.baud_rate, timeout=0.05)
                 with self._lock:
                     self.ports[port_id]["connected"] = True
 
@@ -110,42 +97,60 @@ class SerialManager:
                     f"[{ts}] \x1b[92m--- Conectado em {device} ---\x1b[0m",
                 )
 
-                buf = b""
+                buf = bytearray()
                 current_date = ""
                 log_fh = None
+                last_flush = time.monotonic()
 
                 while self._running:
                     # Read all available bytes at once (bulk read)
                     waiting = ser.in_waiting
                     if waiting > 0:
-                        chunk = ser.read(waiting)
+                        buf.extend(ser.read(waiting))
                     else:
-                        chunk = ser.read(1)
-                        if not chunk:
-                            continue
-
-                    buf += chunk
+                        byte = ser.read(1)
+                        if byte:
+                            buf.extend(byte)
 
                     # Process all complete lines in the buffer
+                    entries_to_notify = []
                     while b"\n" in buf:
-                        raw_line, buf = buf.split(b"\n", 1)
-                        line = raw_line.decode("latin-1").rstrip("\r")
+                        idx = buf.index(b"\n")
+                        raw_line = bytes(buf[:idx])
+                        del buf[:idx + 1]
 
+                        line = raw_line.decode("latin-1").rstrip("\r")
                         if not line:
                             continue
+
+                        ts = datetime.now().isoformat(timespec="milliseconds")
+                        log_entry = f"[{ts}] {line}"
 
                         # Rotate log file daily
                         today = datetime.now().strftime("%Y-%m-%d")
                         if today != current_date:
                             if log_fh:
+                                log_fh.flush()
                                 log_fh.close()
                             log_file = port_log_dir / f"{today}.log"
                             log_fh = open(log_file, "a", encoding="utf-8")
                             current_date = today
 
-                        self._process_line(port_id, line, log_fh, None)
+                        log_fh.write(log_entry + "\n")
+                        entries_to_notify.append(log_entry)
+
+                    # Flush to disk periodically (every 0.5s) instead of per-line
+                    now = time.monotonic()
+                    if log_fh and (now - last_flush) >= 0.5:
+                        log_fh.flush()
+                        last_flush = now
+
+                    # Notify subscribers AFTER all I/O is done
+                    for entry in entries_to_notify:
+                        self._notify(port_id, entry)
 
                 if log_fh:
+                    log_fh.flush()
                     log_fh.close()
 
             except serial.SerialException:
