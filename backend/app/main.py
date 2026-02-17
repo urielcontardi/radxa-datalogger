@@ -2,7 +2,7 @@ import asyncio
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +16,7 @@ LOG_DIR = os.getenv("LOG_DIR", "/app/logs")
 BAUD_RATE = int(os.getenv("BAUD_RATE", "115200"))
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+TS_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\]")
 
 manager = SerialManager(log_dir=LOG_DIR, baud_rate=BAUD_RATE)
 
@@ -27,7 +28,7 @@ async def lifespan(app: FastAPI):
     manager.stop()
 
 
-app = FastAPI(title="Serial Logger", lifespan=lifespan)
+app = FastAPI(title="Radxa Serial Logger", lifespan=lifespan)
 
 
 # --- REST API ---
@@ -71,6 +72,12 @@ def _tail_lines(filepath: Path, n: int) -> list[str]:
     return lines[-n:]
 
 
+def _extract_timestamp(line: str) -> Optional[str]:
+    """Extract the ISO timestamp from a log line, e.g. '2026-02-17T16:48:38.784'."""
+    m = TS_RE.match(line)
+    return m.group(1) if m else None
+
+
 @app.get("/api/logs/{port_id}/tail")
 async def tail_logs(port_id: str, lines: int = Query(500, ge=1, le=10000)):
     port_dir = Path(LOG_DIR) / port_id
@@ -94,6 +101,8 @@ async def tail_logs(port_id: str, lines: int = Query(500, ge=1, le=10000)):
 @app.get("/api/logs/{port_id}")
 async def get_logs(
     port_id: str,
+    datetime_from: Optional[str] = Query(None),
+    datetime_to: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     offset: int = Query(0, ge=0),
@@ -104,8 +113,24 @@ async def get_logs(
     if not port_dir.exists():
         return {"lines": [], "has_more": False}
 
-    d_from = date.fromisoformat(date_from) if date_from else date(2000, 1, 1)
-    d_to = date.fromisoformat(date_to) if date_to else date.today()
+    # Determine date range for file selection
+    if datetime_from:
+        d_from = date.fromisoformat(datetime_from[:10])
+    elif date_from:
+        d_from = date.fromisoformat(date_from)
+    else:
+        d_from = date(2000, 1, 1)
+
+    if datetime_to:
+        d_to = date.fromisoformat(datetime_to[:10])
+    elif date_to:
+        d_to = date.fromisoformat(date_to)
+    else:
+        d_to = date.today()
+
+    # Prepare time-based filtering (ISO strings are lexicographically comparable)
+    ts_from = datetime_from.replace(" ", "T") if datetime_from else None
+    ts_to = datetime_to.replace(" ", "T") if datetime_to else None
 
     log_files = sorted(port_dir.glob("*.log"))
     relevant = []
@@ -125,6 +150,16 @@ async def get_logs(
         with open(lf, "r", encoding="utf-8", errors="replace") as fh:
             for raw_line in fh:
                 line = raw_line.rstrip("\n")
+
+                # Time-based filtering
+                if ts_from or ts_to:
+                    line_ts = _extract_timestamp(line)
+                    if line_ts:
+                        if ts_from and line_ts < ts_from:
+                            continue
+                        if ts_to and line_ts > ts_to:
+                            continue
+
                 if search_lower:
                     clean = ANSI_RE.sub("", line).lower()
                     if search_lower not in clean:
