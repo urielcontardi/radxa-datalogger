@@ -51,6 +51,38 @@ class FlashManager:
             return [f.name for f in sorted(self.pack_dir.glob("*.pack"))]
         return []
 
+    def install_packs(self):
+        """Install all .pack files in the pack directory to pyocd cache."""
+        if not self.pack_dir.exists():
+            return
+
+        packs = sorted(self.pack_dir.glob("*.pack"))
+        if not packs:
+            return
+
+        # Check if packs are already installed by listing targets
+        # This is faster than reinstalling every time
+        try:
+            result = subprocess.run(["pyocd", "list", "--targets"], capture_output=True, text=True)
+            installed_targets = result.stdout
+        except Exception:
+            installed_targets = ""
+
+        for p in packs:
+            try:
+                # Simple heuristic: if pack name (e.g. EFR32FG28) is in installed targets, skip
+                # This avoids re-parsing 18MB packs on every boot
+                pack_family = p.stem.split('_')[2] if len(p.stem.split('_')) > 2 else p.stem
+                if pack_family in installed_targets:
+                    logger.info("Pack %s already installed, skipping.", p.name)
+                    continue
+
+                logger.info("Installing pack: %s", p.name)
+                subprocess.run(["pyocd", "pack", "install", str(p)], check=True, capture_output=True)
+            except Exception as e:
+                logger.error("Failed to install pack %s: %s", p.name, e)
+
+
     def flash(
         self,
         port_id: str,
@@ -61,7 +93,7 @@ class FlashManager:
     ) -> dict:
         """Flash a hex file to the device identified by port_id.
 
-        Pauses serial reading, runs pyocd flash, then resumes serial.
+        Runs pyocd flash WITHOUT pausing serial reading.
         Returns dict with success, output, error, command.
         """
         with self.serial_manager._lock:
@@ -85,7 +117,18 @@ class FlashManager:
 
         use_target = target or self.target
         use_freq = frequency or self.frequency
-        use_pack = pack_path or self._find_pack(use_target)
+        
+        # If pack is installed, we don't need to pass it explicitly
+        # But if the user uploaded a specific pack, use it
+        use_pack = pack_path 
+        
+        # If no specific pack provided, check if we need to find one
+        # Optimization: If we installed packs on startup, pyocd should find the target automatically
+        # So we only pass --pack if explicitly requested or if auto-discovery fails
+        if not use_pack:
+            # Check if target is supported without pack
+            # This is slow to check every time, so let's rely on installed packs
+            pass
 
         cmd = [
             "pyocd",
@@ -98,12 +141,15 @@ class FlashManager:
             "-f",
             use_freq,
         ]
+        
+        # Only add --pack if explicitly provided (e.g. uploaded via API)
+        # Otherwise rely on installed packs
         if use_pack:
             cmd.extend(["--pack", use_pack])
 
         cmd_str = " ".join(cmd)
-        logger.info("Pausing serial on %s for flash", port_id)
-        self.serial_manager.pause_port(port_id)
+        # logger.info("Pausing serial on %s for flash", port_id)
+        # self.serial_manager.pause_port(port_id)
 
         try:
             logger.info("Running: %s", cmd_str)
@@ -137,6 +183,6 @@ class FlashManager:
                 "error": str(e),
                 "command": cmd_str,
             }
-        finally:
-            logger.info("Resuming serial on %s", port_id)
-            self.serial_manager.resume_port(port_id)
+        # finally:
+        #     logger.info("Resuming serial on %s", port_id)
+        #     self.serial_manager.resume_port(port_id)

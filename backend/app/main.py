@@ -33,6 +33,12 @@ flash_mgr = FlashManager(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Try to install packs on startup to speed up flashing
+    try:
+        flash_mgr.install_packs()
+    except Exception as e:
+        print(f"Error installing packs: {e}")
+    
     manager.start()
     yield
     manager.stop()

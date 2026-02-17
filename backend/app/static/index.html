@@ -271,8 +271,13 @@ footer{display:flex;justify-content:space-between;align-items:center;
       <div class="advanced-content" id="adv-content">
         <div class="form-row">
           <div class="form-group">
-            <label>Target</label>
-            <input class="form-input" type="text" id="flash-target" value="EFR32FG28B322F1024IM48">
+            <label>Familia (Target)</label>
+            <select class="form-input" id="flash-target-select">
+              <option value="EFR32FG28B322F1024IM48">EFR32FG28 (Gen 2)</option>
+              <option value="EFR32FG23B010F512IM48">EFR32FG23 (Gen 1)</option>
+              <option value="manual">Outro (Manual)</option>
+            </select>
+            <input class="form-input" type="text" id="flash-target-manual" placeholder="Ex: EFR32MG24..." style="display:none;margin-top:4px">
           </div>
           <div class="form-group">
             <label>Frequencia</label>
@@ -621,10 +626,16 @@ const $packDrop    = document.getElementById('pack-drop');
 const $packAvail   = document.getElementById('pack-available');
 const $btnFlash    = document.getElementById('btn-flash');
 const $btnFlashAll = document.getElementById('btn-flash-all');
-const $flashTarget = document.getElementById('flash-target');
+const $flashTargetSelect = document.getElementById('flash-target-select');
+const $flashTargetManual = document.getElementById('flash-target-manual');
 const $flashFreq   = document.getElementById('flash-freq');
 const $flashFLeft  = document.getElementById('flash-footer-left');
 const $flashFRight = document.getElementById('flash-footer-right');
+
+$flashTargetSelect.addEventListener('change', () => {
+  const isManual = $flashTargetSelect.value === 'manual';
+  $flashTargetManual.style.display = isManual ? 'block' : 'none';
+});
 
 function toggleAdvanced() {
   const content = document.getElementById('adv-content');
@@ -637,6 +648,21 @@ $hexInput.addEventListener('change', (e) => {
   hexFile = e.target.files[0] || null;
   $hexName.textContent = hexFile ? hexFile.name : '';
   $hexDrop.classList.toggle('has-file', !!hexFile);
+  
+  // Auto-detect target from filename (simple heuristic)
+  if (hexFile) {
+    const name = hexFile.name.toUpperCase();
+    if (name.includes('FG23') || name.includes('GEN1')) {
+      $flashTargetSelect.value = 'EFR32FG23B010F512IM48';
+      $flashTargetManual.style.display = 'none';
+      consoleLog('Detectado target FG23 pelo nome do arquivo', 'info');
+    } else if (name.includes('FG28') || name.includes('GEN2')) {
+      $flashTargetSelect.value = 'EFR32FG28B322F1024IM48';
+      $flashTargetManual.style.display = 'none';
+      consoleLog('Detectado target FG28 pelo nome do arquivo', 'info');
+    }
+  }
+  
   updateFlashButtons();
 });
 
@@ -696,8 +722,9 @@ async function refreshFlasherPorts() {
     flashPorts = await portsRes.json();
     flashConfig = await configRes.json();
 
-    $flashTarget.value = flashConfig.target || 'EFR32FG28B322F1024IM48';
-    $flashFreq.value = flashConfig.frequency || '20M';
+    // Only set default target if user hasn't touched it yet
+    // $flashTarget.value = flashConfig.target || 'EFR32FG28B322F1024IM48';
+    // $flashFreq.value = flashConfig.frequency || '20M';
 
     if (flashConfig.packs && flashConfig.packs.length) {
       $packAvail.innerHTML = '<div style="font-size:11px;color:var(--text-dim)">Packs no servidor:</div>' +
@@ -729,12 +756,15 @@ async function doFlash(portId, portName) {
   const formData = new FormData();
   formData.append('hex_file', hexFile);
 
-  const target = $flashTarget.value.trim();
+  let target = $flashTargetSelect.value;
+  if (target === 'manual') target = $flashTargetManual.value.trim();
+  
   const freq = $flashFreq.value.trim();
   if (target) formData.append('target', target);
   if (freq) formData.append('frequency', freq);
 
   consoleLog('--- Gravando ' + portName + ' (' + portId + ') ---', 'warn');
+  consoleLog('Target: ' + target, 'info');
   consoleLog('Arquivo: ' + hexFile.name, 'info');
   consoleLog('Aguarde...', 'info');
 
