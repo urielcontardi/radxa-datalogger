@@ -11,6 +11,7 @@ services:
       - /dev:/dev
       - /run/udev:/run/udev:ro
     environment:
+      - TZ=America/Sao_Paulo
       - BAUD_RATE=3000000
       - LOG_DIR=/app/logs
       - PACK_DIR=/app/packs
